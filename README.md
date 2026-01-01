@@ -1,4 +1,4 @@
-OQG
+# Optimized Quantized Graph (OQG)
 
 # Install
 First, install [Anaconda](https://www.anaconda.com/download)

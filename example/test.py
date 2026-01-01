@@ -89,11 +89,11 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
     if not os.path.exists(pq_path):
         raise FileNotFoundError(f"Not Found for PQ Files: {pq_path}")
     npz = np.load(pq_path)
+    pq_codes      = npz["codes"]
+    pq_centroids  = npz["centroids"]
+    query = np.ascontiguousarray(query, dtype=np.float32)    
     if use_opq:
-        pq_codes      = npz["codes"]
-        pq_centroids  = npz["centroids"]
         opq_matrix = npz["opq_matrix"].T
-        query = np.ascontiguousarray(query, dtype=np.float32)    
         opq_matrix = np.ascontiguousarray(opq_matrix, dtype=np.float32)    
 
         # TODO merge this to the c++ to avoid overhead, that can make search even faster
@@ -104,8 +104,6 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
             rot_lat = min(rot_lat, time.perf_counter() - st)
     else:
         rot_lat = 0
-        pq_codes      = npz["codes"]
-        pq_centroids  = npz["centroids"]
         pq_query = query
 
 

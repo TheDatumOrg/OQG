@@ -103,6 +103,7 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
             pq_query = query @ opq_matrix
             rot_lat = min(rot_lat, time.perf_counter() - st)
     else:
+        rot_lat = 0
         pq_codes      = npz["codes"]
         pq_centroids  = npz["centroids"]
         pq_query = query

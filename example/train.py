@@ -305,7 +305,8 @@ CONFIG = {
     "max_workers": 1,
 }
 
-
+os.makedirs(CONFIG['pq_dir'], exist_ok=True)
+os.makedirs(CONFIG['index_dir'], exist_ok=True)
 
 import argparse
 

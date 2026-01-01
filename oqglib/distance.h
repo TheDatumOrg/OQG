@@ -180,17 +180,14 @@ __mmask64 search8BitAVX512_u16sum(const __m512i* L, const uint8_t* codes, uint16
     for (int col = 0; col < numSubspaces; ++col) {
         __m512i code = _mm512_loadu_si512((const void*)(codes + batchSize * col));
 
-        // bit7 选择哪一对子表
         __mmask64 sel_mask = _mm512_test_epi8_mask(code, _mm512_set1_epi8(0x80));
         // idx = code & 0x7F
         __m512i idx = _mm512_and_si512(code, _mm512_set1_epi8(0x7F));
 
-        // 两次 64-entry 查表 + 一次 blend
         __m512i r01 = _mm512_permutex2var_epi8(L[col*4+0], idx, L[col*4+1]);
         __m512i r23 = _mm512_permutex2var_epi8(L[col*4+2], idx, L[col*4+3]);
         __m512i r   = _mm512_mask_blend_epi8(sel_mask, r01, r23);   // 64×u8
 
-        // 关键：把 r 的低/高 32 字节各自扩到 u16，然后非饱和 16 位相加
         __m256i r_lo8  = _mm512_castsi512_si256(r);
         __m256i r_hi8  = _mm512_extracti64x4_epi64(r, 1);
         __m512i r_lo16 = _mm512_cvtepu8_epi16(r_lo8);   // vpmovzxbw
@@ -233,20 +230,17 @@ __mmask64 search8BitAVX512_u16sumBatch(const __m512i* L, const uint8_t *codes1, 
 
     for (int col = 0; col < numSubspaces; ++col) {
         __m512i code = _mm512_setzero_si512();
-        code = _mm512_mask_loadu_epi8(code, mA, codes1 + batchSize * col);  // 只填充前 k 字节
-        code = _mm512_mask_loadu_epi8(code, mB, codes2 + batchSize * col);  // 填充剩余 64-k 字节
+        code = _mm512_mask_loadu_epi8(code, mA, codes1 + batchSize * col); 
+        code = _mm512_mask_loadu_epi8(code, mB, codes2 + batchSize * col); 
 
-        // bit7 选择哪一对子表
         __mmask64 sel_mask = _mm512_test_epi8_mask(code, _mm512_set1_epi8(0x80));
         // idx = code & 0x7F
         __m512i idx = _mm512_and_si512(code, _mm512_set1_epi8(0x7F));
 
-        // 两次 64-entry 查表 + 一次 blend
         __m512i r01 = _mm512_permutex2var_epi8(L[col*4+0], idx, L[col*4+1]);
         __m512i r23 = _mm512_permutex2var_epi8(L[col*4+2], idx, L[col*4+3]);
         __m512i r   = _mm512_mask_blend_epi8(sel_mask, r01, r23);   // 64×u8
 
-        // 关键：把 r 的低/高 32 字节各自扩到 u16，然后非饱和 16 位相加
         __m256i r_lo8  = _mm512_castsi512_si256(r);
         __m256i r_hi8  = _mm512_extracti64x4_epi64(r, 1);
         __m512i r_lo16 = _mm512_cvtepu8_epi16(r_lo8);   // vpmovzxbw
@@ -255,7 +249,6 @@ __mmask64 search8BitAVX512_u16sumBatch(const __m512i* L, const uint8_t *codes1, 
         acc_hi16 = _mm512_add_epi16(acc_hi16, r_hi16);  // vpaddw
     }
 
-    // 回写 64×u16
     _mm512_storeu_si512((void*)(dists +  0), acc_lo16);
     _mm512_storeu_si512((void*)(dists + 32), acc_hi16);
 
@@ -396,10 +389,7 @@ __mmask64 search6BitAVX512(const uint8_t* lut, const uint8_t* codes, uint8_t *di
     __m512i acc = _mm512_setzero_si512();
 
     for (int col = 0; col < numSubspaces; ++col) {
-        // 加载 64 个 PQ code，值 ∈ [0, 63]
         __m512i code_vec = _mm512_loadu_si512(reinterpret_cast<const void*>(codes + batchSize * col));
-
-        // vpermi2b：使用 bit6 作为 selector，从 lut0/lut1 中选择
         __m512i result = _mm512_permutex2var_epi8(lut_registers[col], code_vec, lut_registers[col]);
 
         acc = _mm512_adds_epu8(acc, result);

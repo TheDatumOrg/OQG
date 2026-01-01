@@ -2079,14 +2079,12 @@ public:
             }
         }
 
-        // ===== 统计 Top-R 匹配率 =====
         double sum8 = 0.0, sum16 = 0.0;
         double acc8 = 0.0, acc16 = 0.0, accfp = 0.0;
         #pragma omp parallel for reduction(+:sum8,sum16,acc8,acc16,accfp) schedule(static)
         for (int nodeID = 0; nodeID < int(curElements); ++nodeID) {
             const Edge &curEdge = nodes[nodeID].edges[0];
 
-            // 取本节点的 batchSize 个邻居的三种距离（真值 / U16 / U8）
             std::array<std::pair<dist_t,int>, batchSize> gt{};
             std::array<std::pair<qdist16_t,int>, batchSize> s16{};
             std::array<std::pair<qdist_t,int>, batchSize> s8{};
@@ -2099,7 +2097,6 @@ public:
                 s8 [i] = { distU8 [nid], i };
             }
 
-            // 只需排名前 R；partial_sort 更快（可选）
             std::partial_sort(gt.begin(),  gt.begin()  + R, gt.end(),  [](auto &a, auto &b){ return a.first < b.first; });
             std::partial_sort(s16.begin(), s16.begin() + R, s16.end(), [](auto &a, auto &b){ return a.first < b.first; });
             std::partial_sort(s8.begin(),  s8.begin()  + R, s8.end(),  [](auto &a, auto &b){ return a.first < b.first; });
@@ -2108,7 +2105,6 @@ public:
             acc16 += s16[R - 1].first;
             accfp += gt[R - 1].first;
 
-            // 真值 Top-R 的位置集合
             for (size_t k = 0; k < R; ++k) isGT[ gt[k].second ] = 1;
 
             int inter16 = 0;
@@ -2309,12 +2305,6 @@ public:
         }
     }
 
-    // 冻结图的只读快照，按层（1跳→2跳→3跳…）每层最多补 alpha，直到 batchSize 或无候选
-    // 关键修复：
-    //  1) 用 snapshot 邻接，遍历期间不受新增边影响
-    //  2) per-node BFS with dist[] 层分明，不会回旋
-    //  3) 双重上限：maxHops 与 maxVisited（≤curElements）
-    //  4) 即使 frontier 非空，但本层 candidates 为 0 也能自然结束
     void supplementLayeredKHopEdges(const size_t level,
                                     const size_t alpha,
                                     size_t maxHops = std::numeric_limits<size_t>::max())
@@ -2322,8 +2312,6 @@ public:
         assert(level < numNeighbors.size());
         assert(numNeighbors[level].size() == curElements);
 
-        // ---------- 1) 冻结邻接快照（只读） ----------
-        // 结构假设：每个 node 在该 level 的邻居前 deg 个有效。
         std::vector<std::vector<id_t>> adj(curElements);
         adj.reserve(curElements);
         for (size_t u = 0; u < curElements; ++u) {
@@ -2336,27 +2324,22 @@ public:
             }
         }
 
-        // 若 maxHops 过大，限制到 curElements（图直径不会超过点数）
         if (maxHops > curElements) maxHops = curElements;
 
-        // ---------- 2) 逐点处理 ----------
-        // 复用容器避免重复分配
         std::vector<uint8_t> seen(curElements);
         std::vector<int>      dist(curElements);
-        std::vector<id_t>     q;        // 简单队列
-        std::vector<id_t>     layer;    // 当前 hop 的节点
+        std::vector<id_t>     q;      
+        std::vector<id_t>     layer;  
         std::vector<id_t>     candidates;
 
         for (size_t u = 0; u < curElements; ++u) {
             size_t &deg_u = numNeighbors[level][u];
-            if (deg_u >= batchSize) continue;           // 已满
-            if (deg_u == 0)         continue;           // 孤点，按你的语义跳过
+            if (deg_u >= batchSize) continue;          
+            if (deg_u == 0)         continue;         
 
-            // 初始化 seen/dist
             std::fill(seen.begin(), seen.end(), 0);
             std::fill(dist.begin(), dist.end(), -1);
 
-            // 自己与已有一跳标记为 seen
             seen[u] = 1;
             const auto &nbrs = adj[u];
             for (id_t v : nbrs) {
@@ -2364,7 +2347,6 @@ public:
                 if (vi < curElements) seen[vi] = 1;
             }
 
-            // ---------- 3) 从 1 跳邻居出发做 BFS ----------
             q.clear();
             for (id_t v : nbrs) {
                 size_t vi = static_cast<size_t>(v);
@@ -2377,32 +2359,28 @@ public:
             int head = 0;
             size_t visited = 0;
 
-            // 分层推进：每一层（hop = 2,3,4, ...）最多补 alpha
             for (size_t hop = 2; hop <= maxHops && deg_u < batchSize; ++hop) {
                 layer.clear();
-                // 取出所有 dist == hop-1 的 frontier
                 int tail = static_cast<int>(q.size());
                 for (; head < tail; ++head) {
                     id_t v = q[head];
                     size_t vi = static_cast<size_t>(v);
                     if (vi >= curElements) continue;
 
-                    // 扩展到下一层
                     for (id_t w : adj[vi]) {
                         size_t wi = static_cast<size_t>(w);
                         if (wi >= curElements) continue;
-                        if (dist[wi] != -1) continue;          // 已经分配过层
+                        if (dist[wi] != -1) continue;        
                         dist[wi] = static_cast<int>(hop);
                         q.push_back(w);
                         layer.push_back(w);
-                        if (++visited >= curElements) break;   // 安全上限
+                        if (++visited >= curElements) break;  
                     }
                     if (visited >= curElements) break;
                 }
 
-                if (layer.empty()) break; // 没有新节点，结束
+                if (layer.empty()) break; 
 
-                // 本层候选：去掉“自己/已有一跳/已在 seen 中的”
                 candidates.clear();
                 for (id_t w : layer) {
                     size_t wi = static_cast<size_t>(w);
@@ -2413,209 +2391,34 @@ public:
 
                 if (candidates.empty()) continue;
 
-                // 追加至多 alpha 个，且不超过 batchSize
                 size_t can_take = std::min({alpha, candidates.size(), batchSize - deg_u});
                 for (size_t k = 0; k < can_take; ++k) {
                     nodes[u].edges[level].neighbors[deg_u] = candidates[k];
                     ++deg_u;
-                    seen[static_cast<size_t>(candidates[k])] = 1;  // 加入后标记，防止后续层再取
+                    seen[static_cast<size_t>(candidates[k])] = 1; 
                     if (deg_u >= batchSize) break;
                 }
             }
         }
     }
 
-    // 你已有的全局：curElements, batchSize, nodes, numNeighbors, id_t 等
-
-    void supplementLayeredKHopEdges_fast(const size_t level,
-                                        const size_t alpha,
-                                        size_t maxHops = std::numeric_limits<size_t>::max())
-    {
-        assert(level < numNeighbors.size());
-        assert(numNeighbors[level].size() == curElements);
-
-        // 1) 冻结每个结点在该 level 的“可读度数”快照（不复制邻接）
-        std::vector<size_t> deg_snap(curElements);
-        for (size_t u = 0; u < curElements; ++u) {
-            size_t deg = numNeighbors[level][u];
-            deg_snap[u] = (deg < batchSize ? deg : batchSize);
-        }
-        if (maxHops > curElements) maxHops = curElements;
-
-        // 2) 共享 visited 时间戳，避免 O(N) 清零
-        std::vector<uint32_t> seen(curElements, 0);
-        uint32_t epoch = 1;               // 0 表示“未访问过”
-        auto mark_seen = [&](size_t idx){ seen[idx] = epoch; };
-        auto is_seen   = [&](size_t idx)->bool { return seen[idx] == epoch; };
-
-        // 3) 复用队列
-        std::vector<id_t> frontier, next;
-
-        // （可选）并行：u 级别天然独立
-        // #pragma omp parallel
-        {
-            // 线程本地容器，避免竞争
-            std::vector<id_t> frontier_local, next_local;
-
-            // #pragma omp for schedule(dynamic, 64)
-            for (size_t u = 0; u < curElements; ++u) {
-                size_t &deg_u = numNeighbors[level][u];
-                if (deg_u >= batchSize || deg_u == 0) continue; // 满了/孤点
-
-                // bump epoch，重置 visited（O(1)）
-                uint32_t my_epoch;
-                // 为避免多线程冲突，这里用局部 epoch 方案：
-                // 每个线程使用局部数组 seen_local 更安全；如果想复用全局 seen，需要原子加 epoch。
-                // 简化起见，这里在单线程情形下演示；若并行，改为 thread_local seen_local 即可。
-                my_epoch = ++epoch;
-                if (my_epoch == 0) {            // wrap-around（极少见），全部清零一次
-                    std::fill(seen.begin(), seen.end(), 0);
-                    epoch = 1;
-                    my_epoch = epoch;
-                }
-
-                // 本地 lambda 捕获 my_epoch
-                auto is_seen_local = [&](size_t idx)->bool { return seen[idx] == my_epoch; };
-                auto mark_seen_local = [&](size_t idx){ seen[idx] = my_epoch; };
-
-                // 初始化：自己 + 已有一跳标记 seen
-                mark_seen_local(u);
-                frontier_local.clear();
-                frontier_local.reserve(deg_u);
-                for (size_t i = 0; i < deg_u; ++i) {
-                    id_t v = nodes[u].edges[level].neighbors[i];
-                    size_t vi = static_cast<size_t>(v);
-                    if (vi >= curElements) continue;
-                    if (!is_seen_local(vi)) {
-                        mark_seen_local(vi);
-                        frontier_local.push_back(v); // 1跳 frontier，用于扩展到2跳
-                    }
-                }
-
-                // 分层扩展：从 hop=2 开始到 maxHops
-                for (size_t hop = 2; hop <= maxHops && deg_u < batchSize; ++hop) {
-                    if (frontier_local.empty()) break;
-
-                    // 本层最多追加 alpha 条
-                    size_t picked = 0;
-
-                    next_local.clear();
-
-                    // 遍历上一层 frontier，扩展到下一层
-                    for (id_t v : frontier_local) {
-                        size_t vi = static_cast<size_t>(v);
-                        if (vi >= curElements) continue;
-
-                        const size_t dv = deg_snap[vi]; // 冻结度数
-                        const id_t* nbrs_v = nodes[vi].edges[level].neighbors;
-
-                        // 扫邻接，但一旦本层 picked==alpha 就不再扩展
-                        for (size_t j = 0; j < dv && picked < alpha && deg_u < batchSize; ++j) {
-                            id_t w = nbrs_v[j];
-                            size_t wi = static_cast<size_t>(w);
-                            if (wi >= curElements) continue;
-                            if (is_seen_local(wi)) continue;       // 已见（自己/已有一跳/本轮已加入）
-                            // 标记见过，避免被多次加入 next 或候选
-                            mark_seen_local(wi);
-
-                            // 直接把它作为“本层候选”加入 u 的邻接（不需要收集到 candidates 再拣）
-                            nodes[u].edges[level].neighbors[deg_u++] = w;
-                            ++picked;
-
-                            // 仍需把 w 放入 next，用于再下一层扩展（除非你不想继续更远层）
-                            next_local.push_back(w);
-                        }
-
-                        if (picked >= alpha || deg_u >= batchSize) break;
-                    }
-
-                    // 如果这层我们没选够 alpha，但 next_local 仍能扩展，继续把剩余的 w 扩展入 next_local
-                    // ——这部分可选：通常“够就停”已经最省。
-                    if (deg_u >= batchSize || next_local.empty()) {
-                        frontier_local.clear();
-                        break;
-                    }
-                    frontier_local.swap(next_local);
-                }
-            }
-        } // end omp
-    }
-
-
-
-    void supplementTwoHopEdges(const size_t level) {
-
-        assert(numNeighbors[level].size() == curElements);
-
-        // 复用一个标记数组，避免频繁分配
-        std::vector<uint8_t> seen;
-        seen.reserve(curElements);
-
-        for (size_t u = 0; u < curElements; ++u) {
-            size_t& deg_u = numNeighbors[level][u];
-            assert(deg_u <= batchSize);
-            if(deg_u == 0){
-                continue;
-            }
-
-            // 初始化 seen：标记自己与已有一跳邻居，防止重复
-            seen.assign(curElements, 0);
-            seen[u] = 1;
-            for (size_t i = 0; i < deg_u; ++i) {
-                id_t v = nodes[u].edges[level].neighbors[i];
-                assert(static_cast<size_t>(v) < curElements);
-                seen[static_cast<size_t>(v)] = 1;
-            }
-
-            // 遍历一跳邻居 v 的一跳邻居 w（即 u 的二跳）
-            bool full = (deg_u >= batchSize);
-            for (size_t i = 0; i < deg_u && !full; ++i) {
-                id_t v = nodes[u].edges[level].neighbors[i];
-                const size_t deg_v = numNeighbors[level][static_cast<size_t>(v)];
-                assert(deg_v <= batchSize);
-
-                for (size_t j = 0; j < deg_v; ++j) {
-                    id_t w = nodes[static_cast<size_t>(v)].edges[level].neighbors[j];
-                    size_t wi = static_cast<size_t>(w);
-                    if (wi >= curElements) continue;      // 防御式检查
-                    if (seen[wi]) continue;     // 已有或是自身，跳过
-
-                    // 追加一个新边 u -> w
-                    if (deg_u < batchSize) {
-                        nodes[u].edges[level].neighbors[deg_u] = w;
-                        ++deg_u;
-                        seen[wi] = 1;
-                        if (deg_u >= batchSize) { full = true; break; }
-                    } else {
-                        full = true; break;
-                    }
-                }
-            }
-
-        }
-    }
 
 
     void supplementTwoHopEdges_parallel(const size_t level) {
         assert(level < numNeighbors.size());
         assert(numNeighbors[level].size() == curElements);
 
-        // 1) 冻结初始度数快照（只读）
         std::vector<size_t> initialDeg(curElements);
         for (size_t u = 0; u < curElements; ++u) {
             initialDeg[u] = std::min(numNeighbors[level][u], batchSize);
         }
 
-        // 2) 固定容量小哈希集合：Open addressing + linear probing
-        //    容量建议 >= 2*(1 + batchSize + batchSize) 以保持低装载率。
-        //    batchSize<=64 时，512 足够稳（装载率 < 0.3）。
-        constexpr size_t HCAP = 512;                 // 必须是 2 的幂
+        constexpr size_t HCAP = 512;             
         static_assert((HCAP & (HCAP - 1)) == 0, "HCAP must be power of two");
 
         constexpr id_t EMPTY = std::numeric_limits<id_t>::max();
 
         auto hash32 = [](uint32_t x) -> uint32_t {
-            // 一个简单的混合哈希（足够用）
             x ^= x >> 16;
             x *= 0x7feb352dU;
             x ^= x >> 15;
@@ -2626,7 +2429,6 @@ public:
 
         #pragma omp parallel
         {
-            // 每线程一个 hash table，避免频繁分配
             std::array<id_t, HCAP> table;
 
             auto clear_table = [&]() {
@@ -2673,11 +2475,8 @@ public:
 
                 clear_table();
 
-                // 标记自己
-                // 注意：u 可能 > id_t 范围吗？你 id_t=unsigned int，100M 没问题。
                 insert(static_cast<id_t>(u));
 
-                // 标记“原始一跳邻居”（并防御非法 id）
                 id_t* nbrs_u = nodes[u].edges[level].neighbors;
                 for (size_t i = 0; i < deg_u_init; ++i) {
                     id_t v = nbrs_u[i];
@@ -2685,7 +2484,6 @@ public:
                     insert(v);
                 }
 
-                // 只用“原始一跳邻居”作为 v
                 for (size_t i = 0; i < deg_u_init && deg_u_local < batchSize; ++i) {
                     id_t v = nbrs_u[i];
                     size_t vi = static_cast<size_t>(v);
@@ -2699,16 +2497,13 @@ public:
                         size_t wi = static_cast<size_t>(w);
                         if (wi >= curElements) continue;
 
-                        // 去重：避免 u 自己、已有一跳、已加入的二跳
                         if (contains(w)) continue;
 
-                        // 加边 u -> w
                         nbrs_u[deg_u_local++] = w;
                         insert(w);
                     }
                 }
 
-                // 写回度数
                 numNeighbors[level][u] = deg_u_local;
             }
         }
@@ -2762,7 +2557,6 @@ public:
     }
 
     void supplementRandomEdges_parallel(const size_t maxLevel) {
-        // --------- 1) 预构建每层候选池（只读），这一段可先单线程 ----------
         std::vector<std::vector<id_t>> candidates(maxLevel + 1);
         for (size_t curID = 0; curID < curElements; ++curID) {
             size_t levels = nodes[curID].edges.size() - 1;
@@ -2772,7 +2566,6 @@ public:
             }
         }
 
-        // --------- 2) 固定容量小哈希集合（避免 unordered_set 的巨大开销） ----------
         constexpr size_t HCAP = 512; // batchSize<=64 时够用；若 batchSize 变大，增大此值
         static_assert((HCAP & (HCAP - 1)) == 0, "HCAP must be power of two");
         constexpr id_t EMPTY = std::numeric_limits<id_t>::max();
@@ -2786,7 +2579,6 @@ public:
 
         #pragma omp parallel
         {
-            // 每线程 RNG：不共享，不加锁
             uint64_t seed = (uint64_t)std::random_device{}();
             seed ^= (uint64_t)omp_get_thread_num() * 0x9e3779b97f4a7c15ULL;
             std::mt19937_64 rng(seed);
@@ -2824,7 +2616,6 @@ public:
                     std::fflush(stdout);
                 }
 
-                // 注意：curID 可能没有那么多层，循环时要检查
                 const size_t nodeLevels = nodes[curID].edges.size() - 1;
                 const size_t upto = std::min(maxLevel, nodeLevels);
 
@@ -2834,7 +2625,6 @@ public:
 
                     Edge &curEdge = nodes[curID].edges[curLevel];
 
-                    // 构建去重集合：自己 + 已有邻居
                     clear_table();
                     insert((id_t)curID);
                     for (size_t i = 0; i < deg; ++i) {
@@ -2844,13 +2634,11 @@ public:
 
                     const size_t needTotal = batchSize - deg;
 
-                    // 选择候选池：level==0 用全局均匀；其他 level 优先用 candidates[curLevel]
                     const std::vector<id_t> *poolPtr = nullptr;
                     if (curLevel != 0 && !candidates[curLevel].empty()) {
                         poolPtr = &candidates[curLevel];
                     }
 
-                    // 随机拒绝采样，直到补满
                     size_t need = needTotal;
                     while (need > 0) {
                         id_t cand;

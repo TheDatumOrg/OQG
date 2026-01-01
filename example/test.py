@@ -220,7 +220,7 @@ def main():
                 for row in rows:
                     if row is None:
                         continue
-                    append_row(out_csv, row)  # 立刻落盘
+                    append_row(out_csv, row)
                     results.append(row)
             except Exception as e:
                 print(f"[FAILED] {ds}: {e}")

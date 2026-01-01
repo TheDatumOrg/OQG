@@ -69,11 +69,11 @@ def read_ivecs(fname):
     d = int(a[0])
     rec = d + 1
 
-    # 完整性检查：必须整除
+
     if a.size % rec != 0:
         raise ValueError(f"Corrupt ivecs? a.size={a.size} not divisible by (d+1)={rec}")
 
-    return a.reshape(-1, rec)[:, 1:]   # 先不 copy，除非你确实需要
+    return a.reshape(-1, rec)[:, 1:]  
 
 
 def read_fvecs(fname):
@@ -92,12 +92,12 @@ def read_vecs(fname):
         assert(True, f"{fname} is not supported!")
 
 def read_bvecs(fname):
-    raw = np.fromfile(fname, dtype=np.uint8)     # 整个文件作为字节流
-    d = int(np.frombuffer(raw[:4].tobytes(), dtype=np.int32)[0])  # 第一个 int32 是维度
+    raw = np.fromfile(fname, dtype=np.uint8)    
+    d = int(np.frombuffer(raw[:4].tobytes(), dtype=np.int32)[0]) 
     rec_size = 4 + d
-    n = raw.size // rec_size                     # 向量数量
-    data = raw.reshape(n, rec_size)[:, 4:]       # 去掉前4字节的头
-    return data.copy()                           # (n, d), dtype=uint8
+    n = raw.size // rec_size                
+    data = raw.reshape(n, rec_size)[:, 4:]    
+    return data.copy()                     
 
 def write_ivecs(fname, a):
     n, d = a.shape
@@ -109,7 +109,6 @@ def write_ivecs(fname, a):
 
 def write_fvecs(fname, a):
     n, d = a.shape
-    # 定义结构化数据类型：先一个 int32 字段，再跟 d 个 float32
     dt = np.dtype([('dim', np.int32), ('vec', np.float32, d)])
     b = np.empty(n, dtype=dt)
     b['dim'] = d
@@ -181,8 +180,6 @@ def padding_datasets(datasets_name=None, mod=16):
             old_base = read_bvecs(conf['base'])
             old_query = read_bvecs(conf['query'])
 
-        #print(name, conf['dim'], new_dim, old_base.shape, old_query.shape)
-
         def pad_data(data, old_dim, new_dim):
             pad_width = new_dim - old_dim
             if name not in ["sift10M"]:
@@ -193,7 +190,6 @@ def padding_datasets(datasets_name=None, mod=16):
 
         base_padded = pad_data(old_base, conf['dim'], new_dim)
         query_padded = pad_data(old_query, conf['dim'], new_dim)
-        #print(base_padded.shape, query_padded.shape)
 
         base_out_path = f"{conf['path']}base_padded{mod}.fvecs"
         query_out_path = f"{conf['path']}query_padded{mod}.fvecs"
@@ -211,7 +207,6 @@ def padding_datasets(datasets_name=None, mod=16):
 def get_human_readable_size(path: str) -> str:
     """Return the file size in human readable format (KB, MB, GB, ...)."""
     size_bytes = os.path.getsize(path)
-    # Define units
     units = ["B", "KB", "MB", "GB", "TB", "PB"]
     i = 0
     while size_bytes >= 1024 and i < len(units) - 1:
@@ -313,36 +308,3 @@ def pack_datasets(out_path="datasets.tar.gz"):
 
     print(f"✅ 打包完成: {out_path}")
 
-
-#pack_datasets()
-#latex_table_generate_body(['LANDMARK', 'sun', 'lendb', 'OBST2024', 'MNIST', 'IQUIQUE', 'geofon', 'sift', 'ukbench', 'YAHOO', 'space1V', 'NEIC', 'CODESEARCHNET', 'imageNet', 'netflix', 'seismic1m', 'ARXIV', 'sald1m', 'instancegm', 'gist', 'bigann', 'LLAMA', 'deep1m', 'AGNEWS', 'CELEBA', 'audio', 'GOOGLEQA', 'crawl', 'glove', 'CCNEWS', 'texttoimage', 'notre', 'astro1m', 'millionSong', 'nuswide', 'tiny5m', 'cifar'], 'latex.txt')
-#get_dataset_stat()
-# for mod in range(4, 32, 2):
-#     padding_datasets(["sift10M"], mod)
-# print("Start Padding")
-#padding_datasets(["sift10M"], 10)
-# padding_datasets(["sift10M"], 12)
-# padding_datasets(["sift10M"], 14)
-# padding_datasets(["sift10M"], 18)
-# padding_datasets(["sift10M"], 20)
-# padding_datasets(["sift10M"], 22)
-# padding_datasets(["sift10M"], 24)
-# padding_datasets(None, 15)
-# padding_datasets(None, 1)
-# padding_datasets(None, 2)
-# padding_datasets(None, 36)
-# padding_datasets(["sift10M"], 7)
-# padding_datasets(["sift10M"], 9)
-
-# padding_datasets(None, 11)
-# padding_datasets(None, 13)
-# padding_datasets(None, 15)
-# padding_datasets(None, 17)
-# padding_list = list(range(4, 32+1, 2))
-# for m in tqdm(padding_list):
-#     padding_datasets(None, m)
-
-# check_path()
-#check_shapes(["crawl"], 16)
-# padding_datasets()
-#latex_table_generate(None, "dataset_table.tex")

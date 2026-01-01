@@ -8,8 +8,8 @@ namespace gg {
 
 template <
     size_t   K,
-    typename Item,                 // 必须有 dist 字段 + < > 运算符
-    bool     KeepSmallest = true   // true: 保留最小的K; false: 保留最大的K
+    typename Item,              
+    bool     KeepSmallest = true 
 >
 struct FixedKHeap {
     static_assert(K > 0, "K must be > 0");
@@ -21,7 +21,6 @@ struct FixedKHeap {
     inline size_t size()  const noexcept { return sz; }
     inline bool   full()  const noexcept { return sz == K; }
 
-    // 阈值（堆顶，当前最差的元素）
     inline auto bound() const noexcept {
         if (sz < K) {
             if constexpr (KeepSmallest) 
@@ -32,12 +31,10 @@ struct FixedKHeap {
         return heap[0].dist;
     }
 
-    // 查看堆顶元素
     inline const Item& top() const noexcept {
         return heap[0];
     }
 
-    // 插入逻辑：Item需要有 dist 字段
     inline bool try_push(const Item& x) noexcept {
         if (sz < K) {
             size_t i = sz++;
@@ -45,7 +42,6 @@ struct FixedKHeap {
             sift_up(i);
             return true;
         }
-        // 判断优劣：KeepSmallest 保留小的 -> 丢掉不比堆顶小的
         if constexpr (KeepSmallest) {
             if (!(x < heap[0])) return false; 
         } else {
@@ -56,7 +52,6 @@ struct FixedKHeap {
         return true;
     }
 
-    // 弹出堆顶
     inline Item pop() noexcept {
         Item top = heap[0];
         heap[0] = heap[--sz];
@@ -64,7 +59,6 @@ struct FixedKHeap {
         return top;
     }
 
-    // 升序排序输出
     inline void sort_ascending() noexcept {
         for (size_t n = sz; n > 1; --n) {
             std::swap(heap[0], heap[n-1]);
@@ -73,7 +67,6 @@ struct FixedKHeap {
     }
 
 private:
-    // 上滤（基于比较符号）
     inline void sift_up(size_t i) noexcept {
         Item x = heap[i];
         while (i) {
@@ -89,7 +82,6 @@ private:
         heap[i] = x;
     }
 
-    // 下滤
     inline void sift_down(size_t i) noexcept { sift_down_range(i, sz); }
 
     inline void sift_down_range(size_t i, size_t n) noexcept {
@@ -173,39 +165,30 @@ private:
 
 template <typename Item>
 struct SearchBuffer {
-    // 与 MinHeapFast 相同的“容器名”和接口
     std::vector<Item> h;
 
-    // 要求：Item 是可平凡拷贝的（才能使用 memmove 做无异常搬移）
     static_assert(std::is_trivially_copyable<Item>::value,
                   "SearchBuffer requires trivially copyable Item for noexcept memmove.");
-    // 要求：Item 有 vecID 字段（用于 next_id）
-    // （如果你的类型名不同，可删掉这个断言）
-    // struct { decltype(Item::vecID) vecID; };
     
     inline bool   empty() const noexcept { return h.empty(); }
     inline size_t size()  const noexcept { return h.size(); }
     inline const Item& top() const noexcept { return h[0]; }
 
-    // 二分查找插入位置：保持 h 升序（最小元素在 h[0]）
     inline void push(const Item& x) noexcept {
         const size_t n = h.size();
         h.emplace_back();                // 先扩一位
-        // 二分找插入位置（lower_bound：首个 !(h[mid] < x)）
         size_t lo = 0, hi = n;
         while (lo < hi) {
             size_t mid = (lo + hi) >> 1;
             if (h[mid] < x) lo = mid + 1;
             else            hi = mid;
         }
-        // 右移 [lo, n-1] 到 [lo+1, n]
         if (n > lo) {
             std::memmove(&h[lo + 1], &h[lo], (n - lo) * sizeof(Item));
         }
         h[lo] = x;
     }
 
-    // 弹出最小项（h[0]）
     inline Item pop() noexcept {
         Item t = h[0];
         const size_t n = h.size();
@@ -213,13 +196,11 @@ struct SearchBuffer {
             h.pop_back();
             return t;
         }
-        // 左移 [1, n-1] 到 [0, n-2]
         std::memmove(&h[0], &h[1], (n - 1) * sizeof(Item));
         h.pop_back();
         return t;
     }
 
-    // 与 MinHeapFast 相同：取下一个候选的 id
     inline auto next_id() const { return h[0].vecID; }
 };
 

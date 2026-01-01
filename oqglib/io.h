@@ -16,13 +16,11 @@ namespace gg {
             exit(0);
         }
 
-        // 读取特征数量和维度
         file.read(reinterpret_cast<char*>(&num_vectors), sizeof(int));
         file.read(reinterpret_cast<char*>(&dim), sizeof(int));
 
         float *data = new float[dim*num_vectors];
 
-        // 读取特征数据到浮动数组中
         file.read(reinterpret_cast<char*>(data), num_vectors * dim * sizeof(float));
 
         file.close();
@@ -36,11 +34,9 @@ namespace gg {
             exit(0);
         }
 
-        // 写入特征数量和维度
         file.write(reinterpret_cast<const char*>(&num_vectors), sizeof(int));
         file.write(reinterpret_cast<const char*>(&dim), sizeof(int));
 
-        // 写入每个向量的数据
         file.write(reinterpret_cast<const char*>(data), num_vectors * dim * sizeof(float));
 
         file.close();
@@ -69,14 +65,14 @@ namespace gg {
     template <typename T>
     void writeVector(std::ofstream& ofs, const std::vector<T>& vec) {
         size_t size = vec.size();
-        ofs.write(reinterpret_cast<const char*>(&size), sizeof(size));      // 先写长度
+        ofs.write(reinterpret_cast<const char*>(&size), sizeof(size)); 
         ofs.write(reinterpret_cast<const char*>(vec.data()), sizeof(T) * size);
     }
 
     template <typename T>
     void readVector(std::ifstream& ifs, std::vector<T>& vec) {
         size_t size;
-        ifs.read(reinterpret_cast<char*>(&size), sizeof(size));             // 先读长度
+        ifs.read(reinterpret_cast<char*>(&size), sizeof(size));           
         vec.resize(size);
         ifs.read(reinterpret_cast<char*>(vec.data()), sizeof(T) * size);
     }

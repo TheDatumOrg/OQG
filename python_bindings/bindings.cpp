@@ -15,12 +15,11 @@ namespace py = pybind11;
 using namespace pybind11::literals;  // needed to bring in _a literal
 
 /*
- * replacement for the openmp '#pragma omp parallel for' directive
- * only handles a subset of functionality (no reductions etc)
- * Process ids from start (inclusive) to end (EXCLUSIVE)
- *
- * The method is borrowed from nmslib
- */
+This file is developed based on https://github.com/nmslib/hnswlib/.
+We provide extra support here for 8-bit PQ and 16-bit distance accumulation.
+*/
+
+
 template<class Function>
 inline void ParallelFor(size_t start, size_t end, size_t numThreads, Function fn) {
     if (numThreads <= 0) {
@@ -139,24 +138,19 @@ inline std::filesystem::path canon_path(const py::object& any_path) {
 
 class GGIndex {
 public:
-    // ===== 与原版一致的公共常量/别名 =====
     using dist_t = float;
     using id_t   = unsigned int;
     constexpr static size_t numCentroids = 256;
     constexpr static size_t batchSize    = 64;
-    // constexpr static size_t dim          = 128;
 
 private:
-    // ========== 内部模板实现（每种 NumSubspaces 一套实现） ==========
     template<size_t NumSubspaces, size_t dim>
     struct Impl {
         gg::GlobalGraph<batchSize, numCentroids, NumSubspaces, dim> hnsw;
 
-        // 构建/恢复
         Impl(size_t M, size_t efConstruction) : hnsw(efConstruction, M) {}
-        Impl() : hnsw(1, 1) {} // 仅用于加载后覆盖内部状态
+        Impl() : hnsw(1, 1) {} 
 
-        // ------- 原先的成员功能封装到这里（与原逻辑一致） -------
 
         void save(const std::filesystem::path& path) {
             std::ofstream ofs(path, std::ios::binary);
@@ -212,14 +206,6 @@ private:
                 id_vec
             );
         }
-
-        // struct NavigationAccuracyResult {
-        //     int R;
-        //     double recallDistU8, recallDistU16;
-        //     double avgTopRDistU8, avgTopRDistU16, avgTopRDistFP32;
-        //     double avgDistU8, avgDistU16, avgDistFP32;
-        // };
-    
 
 
         py::tuple searchKNNPQ(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
@@ -305,11 +291,6 @@ private:
             return py::make_tuple(out, latency);
         }
     };
-
-    // ========== 运行时实现容器（需要的 NumSubspaces 在此罗列） ==========
-
-    // 1) 列出“要支持的所有 (numSubspaces, dim) 组合”
-
 
 
     using AnyImpl = std::variant<
@@ -457,7 +438,6 @@ private:
 
 
 public:
-    // ====== 额外重载：允许显式传入 numSubspaces（不破坏老接口）======
     GGIndex(size_t M, size_t efConstruction, size_t numSubspaces, size_t dim)
         : impl(makeImpl(dim, numSubspaces, M, efConstruction)) {}
 

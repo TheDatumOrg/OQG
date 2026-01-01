@@ -1,0 +1,7 @@
+__pycache__
+error.txt
+oqglib.egg-info
+tmp
+build
+*.csv
+index

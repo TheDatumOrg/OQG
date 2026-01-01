@@ -1,1 +1,35 @@
 OQG
+
+# Install
+First, install [Anaconda](https://www.anaconda.com/download)
+```
+pip install cmake==3.28.3
+
+git clone https://github.com/TheDatumOrg/OQG.git
+conda create -n oqg python==3.10 
+conda activate oqg
+pip install faiss-cpu  # As of Dec. 31, 2025, installing FAISS via Conda results in significantly slower PQ training, for reasons that remain unclear.
+pip install numpy
+pip install pybind11
+pip install tqdm   
+
+cd python_bindings
+pip install --no-build-isolation .
+```
+
+# Benchmarks
+```
+cd ../example
+bash train_test.sh
+```
+Now you can check the result at train.csv and test_k100.csv.  
+Please check train.py and test.py for details.  
+
+# Set your Own Datasets
+```
+cd dataset
+mkdir $YOUR_DATASET_NAME
+cd $YOUR_DATASET_NAME
+```
+Then upload your base.fvecs, groundtruth.ivecs, query.fvecs into $YOUR_DATASET_NAME.  
+Then open dataset_config.py and config your path there.

@@ -3,11 +3,10 @@
 # Install
 First, install [Anaconda](https://www.anaconda.com/download)
 ```
-pip install cmake==3.28.3
-
 git clone https://github.com/TheDatumOrg/OQG.git
 conda create -n oqg python==3.10 
 conda activate oqg
+pip install cmake==3.28.3
 pip install faiss-cpu  # As of Dec. 31, 2025, installing FAISS via Conda results in significantly slower PQ training, for reasons that remain unclear.
 pip install numpy
 pip install pybind11

@@ -32,4 +32,4 @@ mkdir $YOUR_DATASET_NAME
 cd $YOUR_DATASET_NAME
 ```
 Then upload your base.fvecs, groundtruth.ivecs, query.fvecs into $YOUR_DATASET_NAME.  
-Then open dataset_config.py and config your path there.
+Then open dataset_config.py and config there.

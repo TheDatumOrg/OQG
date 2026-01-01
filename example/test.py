@@ -129,7 +129,6 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
         if search_method == 1:
             labels, latency = p.searchKNNPQ(pq_query, query, ef_search, topk, num_refine)
             for i in range(repeat - 1):
-                mem = get_max_resident_memory_gb()
                 labels, cur_latency = p.searchKNNPQ(pq_query, query, ef_search, topk, num_refine)
                 latency = min(latency, cur_latency)
         elif search_method == 2:

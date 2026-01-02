@@ -3,20 +3,22 @@
 # Install
 First, install [Anaconda](https://www.anaconda.com/download)
 ```
+sudo apt install gcc-14 
 git clone https://github.com/TheDatumOrg/OQG.git
 conda create -n oqg python==3.10 
 conda activate oqg
 pip install cmake==3.28.3
-pip install faiss-cpu  # As of Dec. 31, 2025, installing FAISS via Conda results in significantly slower PQ training, for reasons that remain unclear.
-pip install numpy
-pip install pybind11
-pip install tqdm   
+pip install faiss-cpu==1.13.2  # As of Dec. 31, 2025, installing FAISS via Conda results in significantly slower PQ training, for reasons that remain unclear.
+pip install numpy==2.2.5
+pip install pybind11==3.0.1
+pip install tqdm==4.67.1
 
 cd python_bindings
 pip install --no-build-isolation .
 ```
 
 # Benchmarks
+First, please check the taskset command in example/train_test.sh, and adjust it with the number of available CPU cores you have.  
 ```
 cd ../example
 bash train_test.sh
@@ -31,4 +33,4 @@ mkdir $YOUR_DATASET_NAME
 cd $YOUR_DATASET_NAME
 ```
 Then upload your base.fvecs, groundtruth.ivecs, query.fvecs into $YOUR_DATASET_NAME.  
-Then open dataset_config.py and config there.
+Then open example/dataset/dataset_config.py and config there.

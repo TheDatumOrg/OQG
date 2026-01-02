@@ -226,17 +226,30 @@ private:
             // A: (M=numQuery, K=dim)
             // B: (K=dim, N=dim)  -> rotT
             // C: (M=numQuery, N=dim)
+            // cblas_sgemm(
+            //     CblasRowMajor,
+            //     CblasNoTrans, CblasNoTrans,
+            //     numQuery,            // M
+            //     dim,                 // N
+            //     dim,                 // K
+            //     1.0f,                // alpha
+            //     oQuery, dim,         // A, lda=K
+            //     rotT,   dim,         // B, ldb=N
+            //     0.0f,                // beta
+            //     rotatedQueries, dim  // C, ldc=N
+            // );
+
             cblas_sgemm(
-                CblasRowMajor,
+                CblasColMajor,
                 CblasNoTrans, CblasNoTrans,
-                numQuery,            // M
-                dim,                 // N
-                dim,                 // K
-                1.0f,                // alpha
-                oQuery, dim,         // A, lda=K
-                rotT,   dim,         // B, ldb=N
-                0.0f,                // beta
-                rotatedQueries, dim  // C, ldc=N
+                dim,                // M  (rows of C_col)  = dim
+                numQuery,           // N  (cols of C_col)  = numQuery
+                dim,                // K
+                1.0f,
+                rotT, dim,          // A_col = rotT interpreted as ColMajor => actually rotT^T
+                oQuery, dim,        // B_col = oQuery interpreted as ColMajor => actually oQuery^T
+                0.0f,
+                rotatedQueries, dim // C_col written as ColMajor (dim x numQuery)
             );
 
             return rotatedQueries;
@@ -282,6 +295,7 @@ private:
             );
 
             double latency = 0.0;
+            auto t0 = std::chrono::steady_clock::now();
             if(!rot.is_none()) {
                 rotate(oQ.data(), R.data(), n, const_cast<float*>(Q));
             } else {
@@ -289,7 +303,7 @@ private:
                 Q = oQ.data();
             }
 
-            auto t0 = std::chrono::steady_clock::now();
+            
             for (ssize_t i = 0; i < n; ++i) {
                 const void* qi  = static_cast<const void*>(Q + i * d);
                 const void* oqi = static_cast<const void*>(oQ.data() + i * d);
@@ -539,8 +553,8 @@ public:
         return std::visit([&](auto& x){ return x.addPoints(pqCentroids, pqCodes, numVectors, rawVectors, toExternalID); }, impl);
     }
 
-    py::object searchKNNPQ(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
-        return std::visit([&](auto& x){ return x.searchKNNPQ(queries, oQueries, efSearch, k, numRefine); }, impl);
+    py::object searchKNNPQ(py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
+        return std::visit([&](auto& x){ return x.searchKNNPQ(oQueries, efSearch, k, numRefine); }, impl);
     }
 
     py::object searchKNNPQ16(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {

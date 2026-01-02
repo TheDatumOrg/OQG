@@ -1,7 +1,8 @@
 # Optimized Quantized Graph (OQG)
 
 # Install
-First, install [Anaconda](https://www.anaconda.com/download)
+First, install [Anaconda](https://www.anaconda.com/download).  
+Then start to install oqglib:  
 ```
 sudo apt install gcc-14 
 git clone https://github.com/TheDatumOrg/OQG.git

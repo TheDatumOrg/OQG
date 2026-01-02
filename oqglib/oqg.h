@@ -149,7 +149,7 @@ public:
     using qdist_t = uint8_t;
     using qdist16_t = uint16_t;
 
-    constexpr static bool timing = true;
+    constexpr static bool timing = false;
     constexpr static bool enableNumNeighborsSerialization = false;
     size_t adjustedSpaceNum = 0;
 
@@ -595,6 +595,67 @@ public:
         }
     }
 
+    template<size_t n>
+    inline void minmax_finite_avx512_float(
+        const float* lut,
+        float& qmin, float& qmax
+    ) {
+        // 初始化
+        float minv = qmin;
+        float maxv = qmax;
+
+        __m512 vmin = _mm512_set1_ps(minv);
+        __m512 vmax = _mm512_set1_ps(maxv);
+
+        // exponent mask for float: 0x7F800000
+        const __m512i expMask = _mm512_set1_epi32(0x7F800000);
+        const __m512i absMask = _mm512_set1_epi32(0x7FFFFFFF);
+        const __m512i expAll1 = _mm512_set1_epi32(0x7F800000);
+
+        size_t i = 0;
+        for (; i + 16 <= n; i += 16) {
+            __m512 x = _mm512_loadu_ps(lut + i);
+
+            // reinterpret as int
+            __m512i xi = _mm512_castps_si512(x);
+            // abs bits to ignore sign
+            __m512i xabs = _mm512_and_si512(xi, absMask);
+            // exponent bits
+            __m512i xexp = _mm512_and_si512(xabs, expMask);
+
+            // finite if exponent != all-ones
+            __mmask16 finite = _mm512_cmpneq_epi32_mask(xexp, expAll1);
+
+            // 用 mask 更新 min/max：对非 finite 的 lane，不更新
+            // mask_min: vmin = min(vmin, x) only where finite
+            vmin = _mm512_mask_min_ps(vmin, finite, vmin, x);
+            vmax = _mm512_mask_max_ps(vmax, finite, vmax, x);
+        }
+
+        // 水平归约到标量
+        alignas(64) float bufMin[16];
+        alignas(64) float bufMax[16];
+        _mm512_store_ps(bufMin, vmin);
+        _mm512_store_ps(bufMax, vmax);
+        for (int k = 0; k < 16; ++k) {
+            minv = std::min(minv, bufMin[k]);
+            maxv = std::max(maxv, bufMax[k]);
+        }
+
+        // 处理尾巴
+        for (; i < n; ++i) {
+            float v = lut[i];
+            // 标量 isfinite（或者你也可以写位判断）
+            if (!std::isfinite(v)) continue;
+            minv = std::min(minv, v);
+            maxv = std::max(maxv, v);
+        }
+
+        qmin = minv;
+        qmax = maxv;
+    }
+
+
     void quantize16LUT() {
         using std::abs;
         using std::isfinite;
@@ -606,14 +667,16 @@ public:
         constexpr size_t numCols = numSubspaces;
 
         // 1) 扫描范围
-        for (int i = 0; i < (int)numRows; ++i) {
-            for (int j = 0; j < (int)numCols; ++j) {
-                dist_t v = lut[i * numCols + j];
-                if (!isfinite((double)v)) continue;   // 跳过 NaN/Inf
-                qmin = std::min(qmin, v);
-                qmax = std::max(qmax, v);
-            }
-        }
+        // for (int i = 0; i < (int)numRows; ++i) {
+        //     for (int j = 0; j < (int)numCols; ++j) {
+        //         dist_t v = lut[i * numCols + j];
+        //         if (!isfinite((double)v)) continue;   // 跳过 NaN/Inf
+        //         qmin = std::min(qmin, v);
+        //         qmax = std::max(qmax, v);
+        //     }
+        // }
+
+        minmax_finite_avx512_float<numRows * numCols>(lut, qmin, qmax);
 
         // 退化：全相等或无有效值 -> 全部量化为中心码（128）
         if (!(qmax > qmin) || (qmax > qmin * 65536)) {
@@ -624,8 +687,8 @@ public:
         }
 
         // 2) 对称幅度 a = max(|qmin|, |qmax|)
-        dist_t a = std::max(abs(qmin), abs(qmax));
-        if (a <= dist_t(0)) a = dist_t(1);  // 保护
+        dist_t a = std::max(std::abs(qmin), std::abs(qmax));
+        if (!std::isfinite((double)a) || a <= dist_t(0)) a = dist_t(1);
 
         // 3) uint8 对称参数
         constexpr qdist_t Qctr = 128; // 0 对应的码

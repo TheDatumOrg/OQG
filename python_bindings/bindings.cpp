@@ -222,23 +222,6 @@ private:
             if (!oQuery || !rotT) throw std::runtime_error("null pointer input.");
             if (numQuery <= 0 || dim <= 0) throw std::runtime_error("invalid shape.");
 
-            // C = A * B
-            // A: (M=numQuery, K=dim)
-            // B: (K=dim, N=dim)  -> rotT
-            // C: (M=numQuery, N=dim)
-            // cblas_sgemm(
-            //     CblasRowMajor,
-            //     CblasNoTrans, CblasNoTrans,
-            //     numQuery,            // M
-            //     dim,                 // N
-            //     dim,                 // K
-            //     1.0f,                // alpha
-            //     oQuery, dim,         // A, lda=K
-            //     rotT,   dim,         // B, ldb=N
-            //     0.0f,                // beta
-            //     rotatedQueries, dim  // C, ldc=N
-            // );
-
             cblas_sgemm(
                 CblasColMajor,
                 CblasNoTrans, CblasNoTrans,

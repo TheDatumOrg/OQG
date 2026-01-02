@@ -9,6 +9,10 @@
 #include <assert.h>
 #include <filesystem>
 #include <cmath>
+#include <immintrin.h>   // _mm_malloc/_mm_free
+#include <cblas.h>
+#include <stdexcept>
+#include <cstddef>
 #include "oqg.h"
 
 namespace py = pybind11;
@@ -208,22 +212,52 @@ private:
         }
 
 
-        py::tuple searchKNNPQ(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
-        {
-            auto Q  = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(queries);
-            auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
-            if (Q.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
 
-            const ssize_t n = Q.shape(0), d = Q.shape(1);
+        static inline float* rotate(
+            const float* oQuery,   // (numQuery, dim) row-major
+            const float* rotT,     // (dim, dim) row-major, already transposed
+            const ssize_t numQuery,
+            float *rotatedQueries
+        ) {
+            if (!oQuery || !rotT) throw std::runtime_error("null pointer input.");
+            if (numQuery <= 0 || dim <= 0) throw std::runtime_error("invalid shape.");
+
+            // C = A * B
+            // A: (M=numQuery, K=dim)
+            // B: (K=dim, N=dim)  -> rotT
+            // C: (M=numQuery, N=dim)
+            cblas_sgemm(
+                CblasRowMajor,
+                CblasNoTrans, CblasNoTrans,
+                numQuery,            // M
+                dim,                 // N
+                dim,                 // K
+                1.0f,                // alpha
+                oQuery, dim,         // A, lda=K
+                rotT,   dim,         // B, ldb=N
+                0.0f,                // beta
+                rotatedQueries, dim  // C, ldc=N
+            );
+
+            return rotatedQueries;
+            // _mm_free(rotatedQueries);
+        }
+
+
+        py::tuple searchKNNPQ(py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
+        {
+            auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
+            if (oQ.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
+
+            const ssize_t n = oQ.shape(0), d = oQ.shape(1);
             py::array_t<unsigned int> out({n, static_cast<ssize_t>(k)});
             auto O = out.mutable_unchecked<2>();
 
             double latency = 0.0;
             auto t0 = std::chrono::steady_clock::now();
             for (ssize_t i = 0; i < n; ++i) {
-                const void* qi  = static_cast<const void*>(Q.data()  + i * d);
                 const void* oqi = static_cast<const void*>(oQ.data() + i * d);
-                auto ans = hnsw.searchKNNPQ(qi, oqi, efSearch, k, numRefine);
+                auto ans = hnsw.searchKNNPQ(oqi, oqi, efSearch, k, numRefine);
                 for (size_t j = 0; j < k; ++j) {
                     unsigned int v = (j < ans.size()) ? ans[j].vecID : 0;
                     O(i, j) = v;
@@ -234,20 +268,30 @@ private:
             return py::make_tuple(out, latency);
         }
 
-        py::tuple searchKNNPQ16(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
+        py::tuple searchKNNPQ16(py::array rot, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
         {
-            auto Q  = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(queries);
+            auto R  = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(rot);
             auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
-            if (Q.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
+            if (oQ.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
 
-            const ssize_t n = Q.shape(0), d = Q.shape(1);
+            const ssize_t n = oQ.shape(0), d = oQ.shape(1);
             py::array_t<unsigned int> out({n, static_cast<ssize_t>(k)});
             auto O = out.mutable_unchecked<2>();
+            const float* Q = reinterpret_cast<float*>(
+                _mm_malloc(static_cast<size_t>(n) * static_cast<size_t>(dim) * sizeof(float), 64)
+            );
 
             double latency = 0.0;
+            if(!rot.is_none()) {
+                rotate(oQ.data(), R.data(), n, const_cast<float*>(Q));
+            } else {
+                _mm_free(const_cast<float*>(Q));
+                Q = oQ.data();
+            }
+
             auto t0 = std::chrono::steady_clock::now();
             for (ssize_t i = 0; i < n; ++i) {
-                const void* qi  = static_cast<const void*>(Q.data()  + i * d);
+                const void* qi  = static_cast<const void*>(Q + i * d);
                 const void* oqi = static_cast<const void*>(oQ.data() + i * d);
                 auto ans = hnsw.searchKNNPQ16(qi, oqi, efSearch, k, numRefine);
                 for (size_t j = 0; j < k; ++j) {
@@ -258,14 +302,8 @@ private:
             auto t1 = std::chrono::steady_clock::now();
             latency = std::chrono::duration<double>(t1 - t0).count();
 
-            // printf("Total Latency is %lf secs\n", latency);
-            // printf("16UKernal Latency is %lf secs\n", gg::kernal16Latency / (1e9));
-            // printf("LUT latency is %lf secs\n", hnsw.lutLatency / (1e9));
-            // printf("Memory usage is around %.3lf GB\n", double(hnsw.memoryUsage()) / 1024 / 1024 / 1024);
-
             return py::make_tuple(out, latency);
         }
-
 
         py::tuple searchKNN(py::array oQueries, size_t efSearch, size_t k)
         {

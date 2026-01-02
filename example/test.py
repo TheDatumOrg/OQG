@@ -95,16 +95,8 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
     if use_opq:
         opq_matrix = npz["opq_matrix"].T
         opq_matrix = np.ascontiguousarray(opq_matrix, dtype=np.float32)    
-
-        # TODO merge this to the c++ to avoid overhead, that can make search even faster
-        rot_lat = 1e9
-        for i in range(4):
-            st = time.perf_counter()
-            pq_query = query @ opq_matrix
-            rot_lat = min(rot_lat, time.perf_counter() - st)
     else:
-        rot_lat = 0
-        pq_query = query
+        opq_matrix = None
 
 
     id_mapping = np.arange(N, dtype=np.int32)
@@ -114,8 +106,6 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
     del npz
     del pq_codes
     del pq_centroids
-    if use_opq:
-        del opq_matrix
     gc.collect()
 
     results = []
@@ -126,21 +116,20 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
         mem = get_max_resident_memory_gb()
 
         if search_method == 1:
-            labels, latency = p.searchKNNPQ(pq_query, query, ef_search, topk, num_refine)
+            labels, latency = p.searchKNNPQ(query, ef_search, topk, num_refine)
             for i in range(repeat - 1):
-                labels, cur_latency = p.searchKNNPQ(pq_query, query, ef_search, topk, num_refine)
+                labels, cur_latency = p.searchKNNPQ(query, ef_search, topk, num_refine)
                 latency = min(latency, cur_latency)
         elif search_method == 2:
-            labels, latency = p.searchKNNPQ16(pq_query, query, ef_search, topk, num_refine)
+            labels, latency = p.searchKNNPQ16(opq_matrix, query, ef_search, topk, num_refine)
             for i in range(repeat - 1):
-                labels, cur_latency = p.searchKNNPQ16(pq_query, query, ef_search, topk, num_refine)
+                labels, cur_latency = p.searchKNNPQ16(opq_matrix, query, ef_search, topk, num_refine)
                 latency = min(latency, cur_latency)
         else:
             raise ValueError(f"unknown search_method={search_method}")
 
 
         recall_k  = compute_recall(labels.astype(np.int64), gt, topk)
-        latency += rot_lat
         throughput = Q / latency
         results.append({
             "Dataset": dataset,
@@ -158,6 +147,8 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
 
     del p
     del base
+    if use_opq:
+        del opq_matrix
     gc.collect()
 
 

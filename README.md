@@ -27,7 +27,7 @@ bash train_test.sh
 Now you can check the result at train.csv and test_k100.csv.  
 Please check example/train.py and example/test.py for details.  
 
-# Set your Own Datasets
+# Set your own datasets
 ```
 cd dataset
 mkdir $YOUR_DATASET_NAME

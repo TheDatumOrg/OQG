@@ -1947,8 +1947,7 @@ public:
         return next_closest_entry_point;
     }
 
-    // 计算：平均_{node} ( |TopR_true ∩ TopR_method| / R )
-    // 返回：{ Recall@R_8bit, Recall@R_16bit }
+
     struct NavigationAccuracyResult {
         int R = 1;
         double recallDistU8 = 0, recallDistU16 = 0;
@@ -1982,7 +1981,7 @@ public:
     analyzeNavigationAccuracy(const void *query, const void *oQuery, const code_t *pqCodes, size_t R = 1) {
         assert(curElements > 0);
 
-        // 计算 8-bit / 16-bit LUT（你这里都用 query 作为 LUT 的基）
+
         computeLUT(static_cast<const dist_t*>(query), true);   // 8-bit LUT
         computeLUT(static_cast<const dist_t*>(query), false);  // 16-bit LUT
 
@@ -1997,7 +1996,6 @@ public:
         NavigationAccuracyResult result;
         result.avgTopRDistU8 = result.avgTopRDistU16 = result.avgTopRDistFP32 = 0;
 
-        // ===== 主批：只覆盖完整的批 =====
         const int fullBatchEnd = (curElements / batchSize) * batchSize;
         #pragma omp parallel for schedule(static)
         for (int nodeID = 0; nodeID < fullBatchEnd; nodeID += batchSize) {
@@ -2023,14 +2021,12 @@ public:
             }
         }
 
-        // ===== 尾巴：不足一个批的剩余元素 =====
         {
             const size_t fullBatchEnd = (size_t(curElements) / batchSize) * batchSize;
             const size_t tailCount    = size_t(curElements) - fullBatchEnd;
 
             if (tailCount > 0) {
                 if (int(curElements) >= batchSize) {
-                    // —— 情况A：总量 ≥ 一个batch，尾批“末端对齐” —— 
                     const int startIdx = int(curElements) - batchSize; // 例如 1000-64=936
                     const uint8_t* codesPtr =
                         reinterpret_cast<const uint8_t*>(pqCodes) + size_t(startIdx) * numSubspaces;
@@ -2055,7 +2051,6 @@ public:
                         distU8  [idx] = d8 [offset + t];
                     }
                 } else {
-                    // —— 情况B：总量 < 一个batch，仍需填充到batchSize 再跑一次 —— 
                     alignas(64) uint8_t codesBuf[batchSize * numSubspaces];
                     std::memset(codesBuf, 0, sizeof(codesBuf));
                     const uint8_t* src = reinterpret_cast<const uint8_t*>(pqCodes);
@@ -2092,7 +2087,7 @@ public:
 
             for (int i = 0; i < int(batchSize); ++i) {
                 const id_t nid = curEdge.neighbors[i];
-                gt [i] = { distFP32[nid], i }; // 若 qdist_t 与 dist_t 精度不同，注意转换
+                gt [i] = { distFP32[nid], i }; 
                 s16[i] = { distU16[nid], i };
                 s8 [i] = { distU8 [nid], i };
             }

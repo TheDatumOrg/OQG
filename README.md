@@ -19,7 +19,7 @@ pip install --no-build-isolation .
 ```
 
 # Benchmarks
-First, please check the taskset command in example/train_test.sh, and adjust it with the number of available CPU cores you have.  
+First, please check the **taskset command** in example/train_test.sh, and adjust it with the number of available CPU cores you have.  
 ```
 cd ../example
 bash train_test.sh

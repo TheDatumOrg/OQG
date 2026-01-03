@@ -72,9 +72,9 @@ private:
         while (i) {
             size_t p = (i - 1) >> 1;
             if constexpr (KeepSmallest) {
-                if (!(heap[p] < x)) break;  // 父 >= 子，停止
+                if (!(heap[p] < x)) break; 
             } else {
-                if (!(heap[p] > x)) break;  // 父 <= 子，停止
+                if (!(heap[p] > x)) break; 
             }
             heap[i] = heap[p];
             i = p;
@@ -153,8 +153,8 @@ private:
             size_t l = i*2 + 1;
             if (l >= n) break;
             size_t r = l + 1;
-            size_t c = (r < n && h[r] < h[l]) ? r : l; // pick smaller child
-            if (!(h[c] < x)) break;                    // x <= child -> stop
+            size_t c = (r < n && h[r] < h[l]) ? r : l; 
+            if (!(h[c] < x)) break;                 
             h[i] = h[c];
             i = c;
         }
@@ -163,45 +163,5 @@ private:
 };
 
 
-template <typename Item>
-struct SearchBuffer {
-    std::vector<Item> h;
-
-    static_assert(std::is_trivially_copyable<Item>::value,
-                  "SearchBuffer requires trivially copyable Item for noexcept memmove.");
-    
-    inline bool   empty() const noexcept { return h.empty(); }
-    inline size_t size()  const noexcept { return h.size(); }
-    inline const Item& top() const noexcept { return h[0]; }
-
-    inline void push(const Item& x) noexcept {
-        const size_t n = h.size();
-        h.emplace_back();                // 先扩一位
-        size_t lo = 0, hi = n;
-        while (lo < hi) {
-            size_t mid = (lo + hi) >> 1;
-            if (h[mid] < x) lo = mid + 1;
-            else            hi = mid;
-        }
-        if (n > lo) {
-            std::memmove(&h[lo + 1], &h[lo], (n - lo) * sizeof(Item));
-        }
-        h[lo] = x;
-    }
-
-    inline Item pop() noexcept {
-        Item t = h[0];
-        const size_t n = h.size();
-        if (n == 1) {
-            h.pop_back();
-            return t;
-        }
-        std::memmove(&h[0], &h[1], (n - 1) * sizeof(Item));
-        h.pop_back();
-        return t;
-    }
-
-    inline auto next_id() const { return h[0].vecID; }
-};
 
 }

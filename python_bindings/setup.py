@@ -16,6 +16,15 @@ include_dirs = [
     np.get_include(),
 ]
 
+CONDA_PREFIX = os.environ.get("CONDA_PREFIX", "")
+
+library_dirs = []
+runtime_library_dirs = [] 
+
+if CONDA_PREFIX:
+    include_dirs.append(os.path.join(CONDA_PREFIX, "include"))
+    library_dirs.append(os.path.join(CONDA_PREFIX, "lib"))
+
 # compatibility when run in python_bindings
 bindings_dir = 'python_bindings'
 if bindings_dir in os.path.basename(os.getcwd()):
@@ -35,6 +44,7 @@ ext_modules = [
         'oqglib',
         source_files,
         include_dirs=include_dirs,
+        library_dirs=library_dirs,
         libraries=libraries,
         language='c++',
         extra_objects=extra_objects,
@@ -81,36 +91,44 @@ def _gcc_file(name):
 
 
 class BuildExt(build_ext):
-    """A custom build extension for adding compiler-specific options."""
     c_opts = {
-        'unix': ['-Ofast', '-lopenblas', '-fopenmp', '-march=native', '-ffast-math', '-mfma', '-funroll-loops', '-flto', '-frename-registers'],  # , '-w'
+        'unix': ['-Ofast', '-fopenmp', '-march=native', '-ffast-math', '-mfma',
+                 '-funroll-loops', '-flto', '-frename-registers'],
     }
     link_opts = {
-        'unix': [],
+        'unix': ['-fopenmp', '-pthread'],
         'msvc': [],
     }
 
-    c_opts['unix'].append("-fopenmp")
+    # compile-time defines
     c_opts['unix'].append("-DUSE_AVX512")
-    link_opts['unix'].extend(['-fopenmp', '-pthread'])
 
     def build_extensions(self):
         ct = self.compiler.compiler_type
         opts = BuildExt.c_opts.get(ct, [])
-        if ct == 'unix':
+        link = BuildExt.link_opts.get(ct, [])
 
+        if ct == 'unix':
             opts.append('-DVERSION_INFO="%s"' % self.distribution.get_version())
             print(f"Use c++ {cpp_flag(self.compiler)}")
             opts.append(cpp_flag(self.compiler))
 
-        elif ct == 'msvc':
-            opts.append('/DVERSION_INFO=\\"%s\\"' % self.distribution.get_version())
+            # ---- BLAS link flags (IMPORTANT) ----
+            conda_prefix = os.environ.get("CONDA_PREFIX", "")
+            if conda_prefix:
+                conda_lib = os.path.join(conda_prefix, "lib")
+                # make sure we link against conda OpenBLAS, and it can be found at runtime
+                link.extend([f"-L{conda_lib}", f"-Wl,-rpath,{conda_lib}", "-lopenblas"])
+            else:
+                # fallback: system OpenBLAS (only if you're not using conda)
+                link.extend(["-lopenblas"])
 
         for ext in self.extensions:
             ext.extra_compile_args.extend(opts)
-            ext.extra_link_args.extend(BuildExt.link_opts.get(ct, []))
+            ext.extra_link_args.extend(link)
 
         build_ext.build_extensions(self)
+
 
 
 setup(

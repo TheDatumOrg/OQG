@@ -98,7 +98,6 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
     else:
         opq_matrix = None
 
-
     id_mapping = np.arange(N, dtype=np.int32)
     base = np.asarray(base, dtype=np.float32, order='C')
     p = oqglib.GGIndex(index_path, base, num_subspaces, dim)
@@ -116,9 +115,9 @@ def test_one_dataset(dataset: str, cfg: dict, eList: list[float]) -> dict:
         mem = get_max_resident_memory_gb()
 
         if search_method == 1:
-            labels, latency = p.searchKNNPQ(query, ef_search, topk, num_refine)
+            labels, latency = p.searchKNNPQ(opq_matrix, query, ef_search, topk, num_refine)
             for i in range(repeat - 1):
-                labels, cur_latency = p.searchKNNPQ(query, ef_search, topk, num_refine)
+                labels, cur_latency = p.searchKNNPQ(opq_matrix, query, ef_search, topk, num_refine)
                 latency = min(latency, cur_latency)
         elif search_method == 2:
             labels, latency = p.searchKNNPQ16(opq_matrix, query, ef_search, topk, num_refine)

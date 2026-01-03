@@ -236,39 +236,18 @@ private:
             );
 
             return rotatedQueries;
-            // _mm_free(rotatedQueries);
         }
 
 
-        py::tuple searchKNNPQ(py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
+        py::tuple searchKNNPQ(py::object rot, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
         {
             auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
             if (oQ.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
 
-            const ssize_t n = oQ.shape(0), d = oQ.shape(1);
-            py::array_t<unsigned int> out({n, static_cast<ssize_t>(k)});
-            auto O = out.mutable_unchecked<2>();
-
-            double latency = 0.0;
-            auto t0 = std::chrono::steady_clock::now();
-            for (ssize_t i = 0; i < n; ++i) {
-                const void* oqi = static_cast<const void*>(oQ.data() + i * d);
-                auto ans = hnsw.searchKNNPQ(oqi, oqi, efSearch, k, numRefine);
-                for (size_t j = 0; j < k; ++j) {
-                    unsigned int v = (j < ans.size()) ? ans[j].vecID : 0;
-                    O(i, j) = v;
-                }
+            py::array_t<dist_t, py::array::c_style | py::array::forcecast> R;
+            if(!rot.is_none()) {
+                R = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(rot);
             }
-            auto t1 = std::chrono::steady_clock::now();
-            latency = std::chrono::duration<double>(t1 - t0).count();
-            return py::make_tuple(out, latency);
-        }
-
-        py::tuple searchKNNPQ16(py::array rot, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
-        {
-            auto R  = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(rot);
-            auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
-            if (oQ.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
 
             const ssize_t n = oQ.shape(0), d = oQ.shape(1);
             py::array_t<unsigned int> out({n, static_cast<ssize_t>(k)});
@@ -286,6 +265,53 @@ private:
                 Q = oQ.data();
             }
 
+            auto t2 = std::chrono::steady_clock::now();
+            double rotLatency = std::chrono::duration<double>(t2 - t0).count();
+
+            
+            for (ssize_t i = 0; i < n; ++i) {
+                const void* qi  = static_cast<const void*>(Q + i * d);
+                const void* oqi = static_cast<const void*>(oQ.data() + i * d);
+                auto ans = hnsw.searchKNNPQ(qi, oqi, efSearch, k, numRefine);
+                for (size_t j = 0; j < k; ++j) {
+                    unsigned int v = (j < ans.size()) ? ans[j].vecID : 0;
+                    O(i, j) = v;
+                }
+            }
+            auto t1 = std::chrono::steady_clock::now();
+            latency = std::chrono::duration<double>(t1 - t0).count();
+            return py::make_tuple(out, latency);
+        }
+
+        py::tuple searchKNNPQ16(py::object rot, py::array oQueries, size_t efSearch, size_t k, size_t numRefine)
+        {
+            auto oQ = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(oQueries);
+            if (oQ.ndim() != 2) throw std::invalid_argument("queries must be a 2-D numpy array");
+
+            py::array_t<dist_t, py::array::c_style | py::array::forcecast> R;
+            if(!rot.is_none()) {
+                R = py::array_t<dist_t, py::array::c_style | py::array::forcecast>(rot);
+            }
+
+            const ssize_t n = oQ.shape(0), d = oQ.shape(1);
+            py::array_t<unsigned int> out({n, static_cast<ssize_t>(k)});
+            auto O = out.mutable_unchecked<2>();
+            const float* Q = reinterpret_cast<float*>(
+                _mm_malloc(static_cast<size_t>(n) * static_cast<size_t>(dim) * sizeof(float), 64)
+            );
+
+            double latency = 0.0;
+            auto t0 = std::chrono::steady_clock::now();
+            if(!rot.is_none()) {
+                rotate(oQ.data(), R.data(), n, const_cast<float*>(Q));
+            } else {
+                _mm_free(const_cast<float*>(Q));
+                Q = oQ.data();
+            }
+
+            auto t2 = std::chrono::steady_clock::now();
+            double rotLatency = std::chrono::duration<double>(t2 - t0).count();
+
             
             for (ssize_t i = 0; i < n; ++i) {
                 const void* qi  = static_cast<const void*>(Q + i * d);
@@ -298,6 +324,15 @@ private:
             }
             auto t1 = std::chrono::steady_clock::now();
             latency = std::chrono::duration<double>(t1 - t0).count();
+
+            if constexpr (gg::timing){
+                puts("Warning: Enable timing will introduce much overhead");
+                printf("Total Latency is %lf secs\n", latency);
+                printf("Rotation Latency is %lf secs\n", rotLatency);
+                printf("16UKernal Latency is %lf secs\n", gg::kernal16Latency / (1e9));
+                printf("LUT Construction latency is %lf secs\n", hnsw.lutLatency / (1e9));
+                printf("Exact LUT Construction latency is %lf secs\n", hnsw.lutConsLatency / (1e9));
+            }
 
             return py::make_tuple(out, latency);
         }
@@ -536,11 +571,11 @@ public:
         return std::visit([&](auto& x){ return x.addPoints(pqCentroids, pqCodes, numVectors, rawVectors, toExternalID); }, impl);
     }
 
-    py::object searchKNNPQ(py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
-        return std::visit([&](auto& x){ return x.searchKNNPQ(oQueries, efSearch, k, numRefine); }, impl);
+    py::object searchKNNPQ(py::object rot, py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
+        return std::visit([&](auto& x){ return x.searchKNNPQ(rot, oQueries, efSearch, k, numRefine); }, impl);
     }
 
-    py::object searchKNNPQ16(py::array queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
+    py::object searchKNNPQ16(py::object queries, py::array oQueries, size_t efSearch, size_t k, size_t numRefine) {
         return std::visit([&](auto& x){ return x.searchKNNPQ16(queries, oQueries, efSearch, k, numRefine); }, impl);
     }
 

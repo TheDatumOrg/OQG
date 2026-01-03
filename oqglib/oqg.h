@@ -140,6 +140,9 @@ void printMatrix(const DType *data, const int row, const int col, std::string in
     puts("");
 }
 
+// For analyses only, enable it will make search much slower
+constexpr static bool timing = false;
+
 template<size_t batchSize, size_t numCentroids, size_t numSubspaces, size_t dim>
 class GlobalGraph {
 public:
@@ -149,7 +152,6 @@ public:
     using qdist_t = uint8_t;
     using qdist16_t = uint16_t;
 
-    constexpr static bool timing = false;
     constexpr static bool enableNumNeighborsSerialization = false;
     size_t adjustedSpaceNum = 0;
 
@@ -339,6 +341,27 @@ public:
     id_t entryPoint;
     // -------------------------------Variables End------------------------------
 
+    void transposePQCentroids(
+        dist_t* pqCentroids,  // length = M * K * dsub, will be overwritten
+        size_t M,             // numSubspaces
+        size_t K,             // numCentroids
+        size_t dsub           // subspaceDim
+    ){
+        std::vector<dist_t> buf(M * K * dsub);
+
+        // input:  [K][M][dsub]  -> idx_in  = i*dim + s*dsub + k
+        // output: [M][K][dsub]  -> idx_out = (s*K + i)*dsub + k
+        for (size_t i = 0; i < K; ++i) {
+            for (size_t s = 0; s < M; ++s) {
+                const dist_t* src = pqCentroids + i * dim + s * dsub;
+                dist_t* dst = buf.data() + (s * K + i) * dsub;
+                std::memcpy(dst, src, dsub * sizeof(dist_t));
+            }
+        }
+
+        std::memcpy(pqCentroids, buf.data(), buf.size() * sizeof(dist_t));
+    }
+
     void load(std::ifstream &ifs) {
         L2Space *l2space = new L2Space(dim);
         distFunc = l2space->get_dist_func();
@@ -363,6 +386,8 @@ public:
         readVector(ifs, toExternalID);
         toExternalID.shrink_to_fit();
         readArray(ifs, pqCentroids, numCentroids*dim);
+        transposePQCentroids(pqCentroids, numSubspaces, numCentroids, dim / numSubspaces);
+
 
         if constexpr (enableNumNeighborsSerialization) {
             size_t maxLevels;
@@ -486,16 +511,15 @@ public:
         delete[] dst;
     }
 
-
+    
 
     template<size_t subspaceDim>
     dist_t computeDistance(
-        const dist_t* querySubspace, 
-        const dist_t* centroidSubspace // , 
-        // size_t subspaceDim
+        const dist_t*  __restrict__ querySubspace, 
+        const dist_t*  __restrict__ centroidSubspace
     ) const{
         dist_t distance = 0.0f;
-        //#pragma omp simd reduction(+:distance)
+        #pragma unroll
         for (size_t i = 0; i < subspaceDim; ++i) {
             dist_t diff = querySubspace[i] - centroidSubspace[i];
             distance += diff * diff;
@@ -519,95 +543,171 @@ public:
         }
     }
 
+    // void quantizeLUT() {
+    //     dist_t qmin, qmax;
+    //     constexpr size_t numRows = numCentroids;
+    //     constexpr size_t numCols = numSubspaces;
+
+    //     // Step 1: Trim the LUT based on non-zero columns (zero threshold 1e-20)
+    //     if(adjustedSpaceNum == 0){
+    //         adjustedSpaceNum = numCols;
+    //         while (adjustedSpaceNum >= 1) {
+    //             bool isZero = true;
+    //             for (int i = 0; i < numRows; ++i) {
+    //                 if (std::abs(lut[i * numCols + adjustedSpaceNum - 1]) > 1e-20) {
+    //                     isZero = false;
+    //                     break;
+    //                 }
+    //             }
+    //             if (isZero) {
+    //                 adjustedSpaceNum--;
+    //             } else {
+    //                 break;
+    //             }
+    //         }
+    //     }
+
+    //     // Step 2: Compute qmin (minimum value in the trimmed LUT)
+    //     qmin = std::numeric_limits<dist_t>::infinity();
+    //     for (int i = 0; i < numRows; ++i) {
+    //         for (int j = 0; j < adjustedSpaceNum; ++j) {
+    //             qmin = std::min(qmin, lut[i * numCols + j]);
+    //         }
+    //     }
+
+    //     // Step 3: Compute qmax
+    //     qmax = 0.0f;
+    //     for (int j = 0; j < adjustedSpaceNum; ++j) {
+    //         // Calculate the minimum value in the j-th column
+    //         dist_t columnMin = std::numeric_limits<dist_t>::infinity();
+    //         dist_t columnMean = 0.;
+    //         for (int i = 0; i < numRows; ++i) {
+    //             columnMin = std::min(columnMin, lut[i * numCols + j]);
+    //             columnMean += (lut[i * numCols + j] / numRows);
+    //         }
+
+    //         // Compute the threshold and add it to qmax
+    //         dist_t threshold = columnMin * adjustedSpaceNum;
+    //         qmax += std::min(columnMean, threshold);
+    //     }
+
+    //     constexpr qdist_t dtype_min = std::numeric_limits<qdist_t>::min();
+    //     constexpr qdist_t dtype_max = std::numeric_limits<qdist_t>::max();
+    //     // Create an output LUT of the same dimensions as the input
+
+    //     debug(qmin != qmax && "if qmin == qmax, then do not need quantization");
+
+    //     // Perform the quantization
+    //     auto* quant = qLUT;
+    //     auto* original = lut;
+    //     int lutSize = numRows*numCols;
+
+    //     while(lutSize--) {
+    //         if(*original == 0) {
+    //             *quant = 0;
+    //         } else {
+    //             dist_t ratio = ((*original) - qmin) / (qmax - qmin);
+    //             ratio =  ratio < 1.0f ? ratio : 1.0f;
+    //             // ratio /= 12; // for sift
+    //             // ratio /= 2;
+    //             *quant = static_cast<qdist_t>(std::round(ratio * (dtype_max-dtype_min)));
+    //             *quant += dtype_min;
+    //             (*quant);
+    //         }
+    //         original++;
+    //         quant++;
+    //     }
+    // }
+
+
     void quantizeLUT() {
         dist_t qmin, qmax;
-        constexpr size_t numRows = numCentroids;
-        constexpr size_t numCols = numSubspaces;
+        const size_t K = numCentroids;
+        const size_t M = numSubspaces;
 
-        // Step 1: Trim the LUT based on non-zero columns (zero threshold 1e-20)
-        if(adjustedSpaceNum == 0){
-            adjustedSpaceNum = numCols;
+        // Step 1: Trim trailing all-zero subspaces (check last subspace, then move left)
+        if (adjustedSpaceNum == 0) {
+            adjustedSpaceNum = M;
             while (adjustedSpaceNum >= 1) {
+                const size_t s = adjustedSpaceNum - 1; // last active subspace
                 bool isZero = true;
-                for (int i = 0; i < numRows; ++i) {
-                    if (std::abs(lut[i * numCols + adjustedSpaceNum - 1]) > 1e-20) {
+                for (size_t i = 0; i < K; ++i) {
+                    if (std::abs(lut[s * K + i]) > 1e-20) {
                         isZero = false;
                         break;
                     }
                 }
-                if (isZero) {
-                    adjustedSpaceNum--;
-                } else {
-                    break;
-                }
+                if (isZero) adjustedSpaceNum--;
+                else break;
             }
         }
 
-        // Step 2: Compute qmin (minimum value in the trimmed LUT)
+        // Step 2: qmin = minimum over active subspaces
         qmin = std::numeric_limits<dist_t>::infinity();
-        for (int i = 0; i < numRows; ++i) {
-            for (int j = 0; j < adjustedSpaceNum; ++j) {
-                qmin = std::min(qmin, lut[i * numCols + j]);
+        for (size_t s = 0; s < adjustedSpaceNum; ++s) {
+            const dist_t* row = lut + s * K;
+            for (size_t i = 0; i < K; ++i) {
+                qmin = std::min(qmin, row[i]);
             }
         }
 
-        // Step 3: Compute qmax
+        // Step 3: qmax (your original definition)
         qmax = 0.0f;
-        for (int j = 0; j < adjustedSpaceNum; ++j) {
-            // Calculate the minimum value in the j-th column
-            dist_t columnMin = std::numeric_limits<dist_t>::infinity();
-            dist_t columnMean = 0.;
-            for (int i = 0; i < numRows; ++i) {
-                columnMin = std::min(columnMin, lut[i * numCols + j]);
-                columnMean += (lut[i * numCols + j] / numRows);
+        for (size_t s = 0; s < adjustedSpaceNum; ++s) {
+            const dist_t* row = lut + s * K;
+
+            dist_t columnMin  = std::numeric_limits<dist_t>::infinity();
+            dist_t columnMean = 0.0f;
+
+            for (size_t i = 0; i < K; ++i) {
+                const dist_t v = row[i];
+                columnMin  = std::min(columnMin, v);
+                columnMean += (v / static_cast<dist_t>(K));
             }
 
-            // Compute the threshold and add it to qmax
-            dist_t threshold = columnMin * adjustedSpaceNum;
+            dist_t threshold = columnMin * static_cast<dist_t>(adjustedSpaceNum);
             qmax += std::min(columnMean, threshold);
         }
 
         constexpr qdist_t dtype_min = std::numeric_limits<qdist_t>::min();
         constexpr qdist_t dtype_max = std::numeric_limits<qdist_t>::max();
-        // Create an output LUT of the same dimensions as the input
 
         debug(qmin != qmax && "if qmin == qmax, then do not need quantization");
 
-        // Perform the quantization
+        // Step 4: Quantize (subspace-major traversal)
+        const dist_t invRange = dist_t(1.0) / (qmax - qmin);
+        const dist_t scale = static_cast<dist_t>(dtype_max - dtype_min);
+
         auto* quant = qLUT;
         auto* original = lut;
-        int lutSize = numRows*numCols;
-
+        int lutSize = numCentroids*numSubspaces;
         while(lutSize--) {
             if(*original == 0) {
                 *quant = 0;
             } else {
                 dist_t ratio = ((*original) - qmin) / (qmax - qmin);
                 ratio =  ratio < 1.0f ? ratio : 1.0f;
-                // ratio /= 12; // for sift
-                // ratio /= 2;
                 *quant = static_cast<qdist_t>(std::round(ratio * (dtype_max-dtype_min)));
                 *quant += dtype_min;
-                (*quant);
             }
             original++;
             quant++;
         }
     }
 
+
+
     template<size_t n>
     inline void minmax_finite_avx512_float(
         const float* lut,
         float& qmin, float& qmax
     ) {
-        // 初始化
         float minv = qmin;
         float maxv = qmax;
 
         __m512 vmin = _mm512_set1_ps(minv);
         __m512 vmax = _mm512_set1_ps(maxv);
 
-        // exponent mask for float: 0x7F800000
         const __m512i expMask = _mm512_set1_epi32(0x7F800000);
         const __m512i absMask = _mm512_set1_epi32(0x7FFFFFFF);
         const __m512i expAll1 = _mm512_set1_epi32(0x7F800000);
@@ -616,18 +716,11 @@ public:
         for (; i + 16 <= n; i += 16) {
             __m512 x = _mm512_loadu_ps(lut + i);
 
-            // reinterpret as int
             __m512i xi = _mm512_castps_si512(x);
-            // abs bits to ignore sign
             __m512i xabs = _mm512_and_si512(xi, absMask);
-            // exponent bits
             __m512i xexp = _mm512_and_si512(xabs, expMask);
-
-            // finite if exponent != all-ones
             __mmask16 finite = _mm512_cmpneq_epi32_mask(xexp, expAll1);
 
-            // 用 mask 更新 min/max：对非 finite 的 lane，不更新
-            // mask_min: vmin = min(vmin, x) only where finite
             vmin = _mm512_mask_min_ps(vmin, finite, vmin, x);
             vmax = _mm512_mask_max_ps(vmax, finite, vmax, x);
         }
@@ -642,10 +735,8 @@ public:
             maxv = std::max(maxv, bufMax[k]);
         }
 
-        // 处理尾巴
         for (; i < n; ++i) {
             float v = lut[i];
-            // 标量 isfinite（或者你也可以写位判断）
             if (!std::isfinite(v)) continue;
             minv = std::min(minv, v);
             maxv = std::max(maxv, v);
@@ -666,19 +757,8 @@ public:
         constexpr size_t numRows = numCentroids;
         constexpr size_t numCols = numSubspaces;
 
-        // 1) 扫描范围
-        // for (int i = 0; i < (int)numRows; ++i) {
-        //     for (int j = 0; j < (int)numCols; ++j) {
-        //         dist_t v = lut[i * numCols + j];
-        //         if (!isfinite((double)v)) continue;   // 跳过 NaN/Inf
-        //         qmin = std::min(qmin, v);
-        //         qmax = std::max(qmax, v);
-        //     }
-        // }
-
         minmax_finite_avx512_float<numRows * numCols>(lut, qmin, qmax);
 
-        // 退化：全相等或无有效值 -> 全部量化为中心码（128）
         if (!(qmax > qmin) || (qmax > qmin * 65536)) {
             quantize16LUT_saturated();
             // quantize16LUT_mean();
@@ -686,15 +766,12 @@ public:
             return;
         }
 
-        // 2) 对称幅度 a = max(|qmin|, |qmax|)
         dist_t a = std::max(std::abs(qmin), std::abs(qmax));
         if (!std::isfinite((double)a) || a <= dist_t(0)) a = dist_t(1);
 
-        // 3) uint8 对称参数
-        constexpr qdist_t Qctr = 128; // 0 对应的码
-        constexpr int      Qrad = 127; // 对称半径（左/右各 127 级）
+        constexpr qdist_t Qctr = 128; 
+        constexpr int      Qrad = 127; 
 
-        // 4) 逐元素量化（x==0 -> 精确映射为中心码）
         auto* quant    = q16LUT;
         auto* original = lut;
         int   lutSize  = int(numRows * numCols);
@@ -706,15 +783,12 @@ public:
                 *quant++ = Qctr;
                 continue;
             }
-
-            // 裁剪到 [-a, a]
             if (x >  a) x =  a;
             if (x < -a) x = -a;
 
-            // [-1,1] -> [-Qrad, Qrad] -> [0,255]
-            double r  = double(x) / double(a);          // [-1,1]
-            double qf = std::round(r * double(Qrad));   // [-127,127]
-            int  qi = (int )qf + (int)Qctr; // [1..255]或[0..254]含0
+            double r  = double(x) / double(a);       
+            double qf = std::round(r * double(Qrad));   
+            int  qi = (int )qf + (int)Qctr;
 
             if (qi < 0)   qi = 0;
             if (qi > 255) qi = 255;
@@ -753,7 +827,6 @@ public:
         }
 
 
-        // ---------- 1) 先计算每列的 columnMin / columnMean ----------
         for (size_t j = 0; j < adjustedSpaceNum; ++j) {
             dist_t columnMin  = std::numeric_limits<dist_t>::infinity();
             dist_t columnMean = 0.0;
@@ -765,28 +838,22 @@ public:
                 columnMean += v / dist_t(numRows);
             }
 
-            // 每列阈值
             dist_t threshold = columnMin * dist_t(adjustedSpaceNum);
 
-            // 将 min(columnMean, threshold) 累加到 qmax
             qmax += std::min(columnMean, threshold);
 
-            // qmin 全局最小
             qmin = std::min(qmin, columnMin);
 
         }
 
-        // ---------- 2) 若全为无效值或范围退化 ----------
         if (!(qmax > qmin)) {
             std::fill(q16LUT, q16LUT + numRows * numCols, static_cast<qdist_t>(128));
             return;
         }
 
-        // ---------- 3) 对称幅度 ----------
         dist_t a = std::max(abs(qmin), abs(qmax));
         if (a <= dist_t(0)) a = dist_t(1);
 
-        // ---------- 4) 对称量化 ----------
         constexpr qdist_t Qctr = 128;
         constexpr int      Qrad = 127;
 
@@ -829,10 +896,8 @@ public:
         constexpr size_t numRows = numCentroids;
         constexpr size_t numCols = numSubspaces;
 
-        // 百分位（例如 0.95 = 95%）
         constexpr double kPercentile = 0.9;
 
-        // ---- 0) 末尾全零列裁剪（与原来一致） ----
         if(adjustedSpaceNum == 0){
             adjustedSpaceNum = numCols;
             while (adjustedSpaceNum >= 1) {
@@ -848,7 +913,6 @@ public:
             }
         }
 
-        // ---- 1) 收集有效数值，计算全局 qmin 与百分位 qmax ----
         dist_t qmin = std::numeric_limits<dist_t>::infinity();
         std::vector<dist_t> vals;
         vals.reserve(numRows * static_cast<size_t>(adjustedSpaceNum));
@@ -863,7 +927,6 @@ public:
             }
         }
 
-        // 无有效值：输出全 128，返回
         if (vals.empty()) {
             quantize16LUT_mean();
             return;
@@ -871,19 +934,16 @@ public:
             // return;
         }
 
-        // 计算百分位 qmax：按 kPercentile 选择第 k 个顺位统计量
         const size_t n = vals.size();
         const size_t kth = std::min(n - 1, static_cast<size_t>(std::floor(kPercentile * (n - 1))));
         std::nth_element(vals.begin(), vals.begin() + kth, vals.end());
         dist_t qmax = vals[kth];
 
-        // 退化：范围太小则输出 128
         if (!(qmax > qmin) || (qmax > qmin * 65525)) {
             quantize16LUT_mean();
             return;
         }
 
-        // ---- 2) 线性映射 [qmin, qmax] -> [0,255] 并饱和 ----
         const double denom = double(qmax - qmin);
         auto* quant    = q16LUT;
         auto* original = lut;
@@ -915,8 +975,10 @@ public:
             *quant++ = static_cast<qdist_t>(qi);
         }
     }
+
     
     double lutLatency = 0;
+    double lutConsLatency = 0;
 
     void computeLUT(const dist_t* query, bool is16 = false) {
         using clock = std::chrono::steady_clock;
@@ -928,24 +990,36 @@ public:
 
         // The size of each subspace (dim / m)
         constexpr size_t subspaceDim = dim / numSubspaces;
-        dist_t *curLUT =  lut;
-        for (size_t i = 0; i < numCentroids; ++i) {
-            // For each centroid, we iterate over each subspace
-            for (size_t subspace = 0; subspace < numSubspaces; ++subspace) {
-                // Get the corresponding data point subspace and centroid subspace using pointer arithmetic
-                const dist_t* querySubspace = query + subspace * subspaceDim;
-                const dist_t* centroidSubspace = pqCentroids + i * dim + subspace * subspaceDim;
+        // for (size_t s = 0; s < numSubspaces; ++s) {
+        //     const dist_t* qSub = query + s * subspaceDim;
+        //     dist_t* out = lut + s * numCentroids;  
 
-                dist_t dist = computeDistance<subspaceDim>(querySubspace, centroidSubspace);
-                *curLUT = dist;
-                curLUT++;
+        //     for (size_t i = 0; i < numCentroids; ++i) {
+        //         const dist_t* cSub = pqCentroids + i * dim + s * subspaceDim; 
+        //         out[i] = computeDistance<subspaceDim>(qSub, cSub);
+        //     }
+        // }
+
+        for (size_t s = 0; s < numSubspaces; ++s) {
+            const dist_t* qSub = query + s*subspaceDim;
+            dist_t* out = lut + s*numCentroids;
+
+            const dist_t* centBase = pqCentroids + (s*numCentroids)*subspaceDim;   // pqCentroids is (M,K,dsub)
+
+            for (size_t i = 0; i < numCentroids; ++i) {
+                out[i] = computeDistance<subspaceDim>(qSub, centBase + i*subspaceDim);
             }
+        }
+
+        if constexpr(timing) {
+            auto t1 = clock::now();
+            lutConsLatency += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         }
 
 
         if(!is16){
             quantizeLUT();
-            transpose(numCentroids, numSubspaces, qLUT);
+            //transpose(numCentroids, numSubspaces, qLUT);
             for (int col = 0; col < numSubspaces; ++col) {
                 for (int j = 0; j < 4; ++j) {
                     q8LUTr[col * 4 + j] = _mm512_loadu_si512(reinterpret_cast<const void*>(
@@ -954,7 +1028,7 @@ public:
             }
         } else {
             quantize16LUT();
-            transpose(numCentroids, numSubspaces, q16LUT);
+            //transpose(numCentroids, numSubspaces, q16LUT);
             for (int col = 0; col < numSubspaces; ++col) {
                 const uint8_t* base = q16LUT + col * 256;
                 q16LUTr[col*4+0] = _mm512_loadu_si512((const void*)(base +   0));
@@ -969,9 +1043,6 @@ public:
             lutLatency += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         }
 
-
-        // printMatrix(lut, numSubspaces, numCentroids, "LUT");
-        // printMatrix(q16LUT, numSubspaces, numCentroids, "qLUT");
 
         return;
     }
@@ -1107,9 +1178,6 @@ public:
     std::vector<ID<dist_t>> searchKNNPQ16(const void *query, const void *oQuery, const int efSearch,
         const int k, const int numRefine
     ) {
-        // MaxHeap<qdist16_t> topCandidates;
-        // MinHeap<qdist16_t> candidateSet;
-        //FixedKHeap<15, ID<qdist16_t>, true> topCandidates;
         MaxHeap<qdist16_t> topCandidates;
         MinHeapFast<ID<qdist16_t>> candidateSet;
 

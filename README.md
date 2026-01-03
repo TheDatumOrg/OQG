@@ -10,7 +10,7 @@ conda create -n oqg python==3.10
 conda activate oqg
 conda install -c conda-forge openblas  
 pip install cmake==3.28.3
-pip install faiss-cpu==1.13.2  # As of Dec. 31, 2025, installing FAISS via Conda results in significantly slower PQ training, for reasons that remain unclear.
+conda install -c pytorch/label/nightly faiss-cpu  
 pip install numpy==2.2.5
 pip install pybind11==3.0.1
 pip install tqdm==4.67.1

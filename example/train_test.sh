@@ -12,5 +12,5 @@ ALL_DS=(netflix)
 for ds in "${ALL_DS[@]}"; do
   echo "Running dataset: $ds"
   taskset -c 0-127 python train.py --ds "$ds"
-  taskset -c 0 python test.py --ds "$ds"
+  python test.py --ds "$ds"
 done

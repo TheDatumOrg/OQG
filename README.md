@@ -35,3 +35,6 @@ cd $YOUR_DATASET_NAME
 ```
 Then upload your base.fvecs, groundtruth.ivecs, query.fvecs into $YOUR_DATASET_NAME.  
 Then open example/dataset/dataset_config.py and config there.
+
+# Search Performance
+![Search Performance](Average.png)
